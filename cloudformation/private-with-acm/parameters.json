@@ -1,0 +1,8 @@
+{
+  "Parameters": {
+    "BucketName": "your-unique-bucket-name",
+    "DomainName": "your.domain.com",
+    "HostedZoneId": "YOUR_HOSTED_ZONE_ID"
+  }
+}
+

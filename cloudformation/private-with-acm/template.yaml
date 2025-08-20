@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private S3 Static Website with CloudFront, ACM, and WAF
+
+# CloudFormation: Private S3 Static Website with CloudFront, ACM, and WAF
+# This template provisions a private static website with:
+# - Private S3 bucket locked down from public access
+# - CloudFront distribution using Origin Access Control (OAC) to securely access S3
+# - ACM certificate for HTTPS on custom domain
+# - AWS WAF protection to guard against common web threats
+
+# ====================================================================================
+# 1. Provider Configuration
+
+# CloudFormation does not require an explicit provider block like Terraform.
+
+# ====================================================================================
+# Parameters (input variables)
+Parameters:
+  BucketName:
+    Type: String
+    Default: achusec-private-s3-static-website-us-east-1
+    Description: Name of the S3 bucket (must be globally unique)
+  DomainName:
+    Type: String
+    Default: cloudformation.achusec.click
+    Description: Custom domain name for the static site
+  HostedZoneId:
+    Type: String
+    Default: Z03186543LKEWSFYJ778L
+    Description: Route 53 Hosted Zone ID
+
+# ====================================================================================
+# 2. S3 Bucket
+
+# 2.1 Create Private S3 Bucket with Access Block
+Resources:
+  StaticSiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      Tags:
+        - Key: Name
+          Value: StaticSiteBucket
+        - Key: Environment
+          Value: Dev
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+# 2.2 S3 Bucket Policy (Allow access from CloudFront only)
+  StaticSiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticSiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${StaticSiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+
+# ====================================================================================
+# 3. CloudFront Origin Access Control (OAC)
+
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${BucketName}-oac'
+        Description: Access control for CloudFront to read private S3 bucket
+        SigningProtocol: sigv4
+        SigningBehavior: always
+        OriginAccessControlOriginType: s3
+
+# ====================================================================================
+# 4. ACM Certificate and Validation
+
+# 4.1 Request Public ACM Certificate with DNS Validation
+  WebsiteCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+# (No need for separate Route53 validation records in CloudFormation —
+# CloudFormation handles it with DomainValidationOptions)
+
+# ====================================================================================
+# 5. WAF Web ACL (Optional)
+
+  WAFWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${BucketName}-waf'
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: webACL
+      Rules:
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 1
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWSManagedRulesCommonRuleSet
+
+# ====================================================================================
+# 6. CloudFront Distribution
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: WAFWebACL
+    Properties:
+      DistributionConfig:
+        Comment: CDN for private static site
+        Enabled: true
+        WebACLId: !GetAtt WAFWebACL.Arn
+        DefaultRootObject: index.html
+        Origins:
+          - Id: !Ref BucketName
+            DomainName: !Sub '${BucketName}.s3.${AWS::Region}.amazonaws.com'
+            S3OriginConfig:
+              OriginAccessIdentity: ""  # OAI not used with OAC
+            OriginAccessControlId: !Ref CloudFrontOAC
+        DefaultCacheBehavior:
+          TargetOriginId: !Ref BucketName
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          MinTTL: 0
+          DefaultTTL: 3600
+          MaxTTL: 86400
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          AcmCertificateArn: !Ref WebsiteCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Aliases:
+          - !Ref DomainName
+
+# ====================================================================================
+# 7. Route 53 DNS Record for Domain
+
+  WebsiteDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront global hosted zone ID
+
+# ====================================================================================
+# 8. Upload Content to S3
+# Not handled in CloudFormation.
+# You need to upload index.html manually or via CI/CD.
+
+# ====================================================================================
+# Outputs
+
+Outputs:
+  BucketName:
+    Value: !Ref StaticSiteBucket
+  BucketArn:
+    Value: !GetAtt StaticSiteBucket.Arn
+  CloudFrontDistributionId:
+    Value: !Ref CloudFrontDistribution
+  CloudFrontURL:
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Description: CloudFront distribution domain name (URL)

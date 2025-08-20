@@ -1,0 +1,6 @@
+{
+  "Parameters": {
+    "BucketName": "achusec-public-s3-static-website-us-east-1"
+  },
+  "Description": "Public S3 Static Website with CloudFront and optional WAF"
+}
