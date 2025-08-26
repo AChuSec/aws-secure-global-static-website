@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
-  paths:
-    - 'terraform/private-with-acm/index.html'
-
+    paths:
+      - 'terraform/private-with-acm/index.html'
 
 jobs:
   deploy:
@@ -29,8 +28,7 @@ jobs:
       - name: Sync files to S3
         run: |
           aws s3 cp terraform/private-with-acm/index.html s3://${{ secrets.S3_BUCKET }}/index.html
-            --delete \
-            --exact-timestamps
+
 
       # Step 4: Invalidate CloudFront cache
       - name: Invalidate CloudFront cache
