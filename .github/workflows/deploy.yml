@@ -4,8 +4,9 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'index.html'   # only trigger when index.html changes
+  paths:
+    - 'terraform/private-with-acm/index.html'
+
 
 jobs:
   deploy:
@@ -27,7 +28,7 @@ jobs:
       # Step 3: Sync files to S3
       - name: Sync files to S3
         run: |
-          aws s3 sync . s3://${{ secrets.S3_BUCKET }} \
+          aws s3 cp terraform/private-with-acm/index.html s3://${{ secrets.S3_BUCKET }}/index.html
             --delete \
             --exact-timestamps
 
